@@ -72,5 +72,5 @@ konan_hr_assistant/
 ---
 
 ## 👥 Made By
-**Konan AI Labs** – On a mission to humanize HR with helpful, always-there assistants ❤️
+**Aravind S** – On a mission to humanize HR with helpful, always-there assistants ❤️
 
