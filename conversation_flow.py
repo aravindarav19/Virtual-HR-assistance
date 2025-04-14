@@ -16,7 +16,7 @@ def run():
     model = "meta-llama/Llama-3.3-70B-Instruct-Turbo-Free"
 
     HR_KNOWLEDGE = """
-    🏢 Konan Tech - HR Policy Summary:
+    🏢 Virtual assistance - HR Policy Summary:
 
     • Employees get **24 paid leave days** per year.
     • Remote work is allowed **up to 2 days per week**.
@@ -66,7 +66,7 @@ def run():
     if "history" not in st.session_state:
         st.session_state.history = []
 
-    st.title("👩‍💼 Konan - Your Virtual HR Assistant")
+    st.title("👩‍💼THE Future- Your Virtual HR Assistant")
     st.write("Ask me anything about your job, leave policy, roles, resume, or mood check-in.")
 
     st.markdown("### 📄 Upload Your Resume (Optional)")
