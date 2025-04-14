@@ -1,0 +1,6 @@
+streamlit
+together
+gTTS
+PyMuPDF
+matplotlib
+pandas
