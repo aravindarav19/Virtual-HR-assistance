@@ -10,8 +10,7 @@ import csv
 import os
 
 # 🔐 API Setup
-st.set_page_config(page_title="
- AI-powered HR Assistant", layout="centered")
+st.set_page_config(page_title="AI-powered HR Assistant", layout="centered")
 TOGETHER_API_KEY = st.secrets["TOGETHER_API_KEY"]
 client = Together(api_key=TOGETHER_API_KEY)
 model = "meta-llama/Llama-3.3-70B-Instruct-Turbo-Free"
