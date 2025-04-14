@@ -69,7 +69,7 @@ def log_mood_to_csv(mood_score):
 if "history" not in st.session_state:
     st.session_state.history = []
 
-st.title("👩‍💼 Konan - Your Virtual HR Assistant")
+st.title("👩‍💼 AI-powered HR Assistant")
 st.write("Ask me anything about your job, leave policy, resume, or mood check-in.")
 
 # 📄 Resume upload
