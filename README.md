@@ -27,8 +27,8 @@ A friendly, AI-powered virtual HR assistant built with **Streamlit** and **Toget
 
 ### 1. Clone the repo
 ```bash
-git clone https://github.com/yourusername/konan-hr-assistant.git
-cd konan-hr-assistant
+git clone https://github.com/aravindarav19/Virtual-HR-assistance.git
+cd Virtual-HR-assistance
 ```
 
 ### 2. Install dependencies
