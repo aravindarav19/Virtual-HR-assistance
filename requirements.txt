@@ -1,5 +1,6 @@
-streamlit>=1.30
+openai>=1.0.0
+streamlit
 pandas
 matplotlib
-openpyxl
-requests
+gTTS
+PyMuPDF
