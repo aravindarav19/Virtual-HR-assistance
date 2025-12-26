@@ -1,5 +1,5 @@
 openai>=1.0.0
-streamlit
+streamlit>=1.30
 pandas
 matplotlib
 gTTS
