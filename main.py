@@ -1,21 +1,36 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
-from together import Together
+from openai import OpenAI
 from datetime import datetime
 from gtts import gTTS
 from tempfile import NamedTemporaryFile
 import fitz  # PyMuPDF
 import csv
 import os
+import traceback
 
-# 🔐 API Setup
+# -----------------------------
+# 🔐 API Setup (DeepSeek)
+# -----------------------------
 st.set_page_config(page_title="AI-powered HR Assistant", layout="centered")
-TOGETHER_API_KEY = st.secrets["TOGETHER_API_KEY"]
-client = Together(api_key=TOGETHER_API_KEY)
-model = "meta-llama/Llama-3.3-70B-Instruct-Turbo-Free"
 
+# In .streamlit/secrets.toml add:
+# DEEPSEEK_API_KEY = "sk-xxxxxxxxxxxxxxxxxxxxxxxx"
+DEEPSEEK_API_KEY = st.secrets["DEEPSEEK_API_KEY"]
+
+client = OpenAI(
+    api_key=DEEPSEEK_API_KEY,
+    base_url="https://api.deepseek.com",
+)
+
+# Choose one:
+MODEL = "deepseek-chat"        # general-purpose
+# MODEL = "deepseek-reasoner"  # heavier reasoning
+
+# -----------------------------
 # 📘 HR Knowledge Base
+# -----------------------------
 HR_KNOWLEDGE = """
 🏢  HR Policy Summary:
 
@@ -28,11 +43,13 @@ HR_KNOWLEDGE = """
 • For emotional support, contact hr@konantech.com or your manager.
 • Job descriptions are available in the internal portal (portal.konantech.com).
 • Employees are expected to follow the code of conduct and report violations.
-"""
+""".strip()
 
+# -----------------------------
 # 🧠 Mood detection logic
-def detect_mood(text):
-    text = text.lower()
+# -----------------------------
+def detect_mood(text: str):
+    text = (text or "").lower()
     mood_map = {
         "stress": ["i'm stressed", "feeling stressed", "so much pressure", "overwhelmed", "burnt out"],
         "anxiety": ["anxious", "worried", "panic", "nervous"],
@@ -45,108 +62,66 @@ def detect_mood(text):
     return None
 
 mood_responses = {
-    "stress": "I'm really sorry you're feeling stressed. You're not alone. Take a short break, breathe deeply, or speak with someone. HR is here to support you ❤️",
-    "anxiety": "Anxiety can be really tough. Take it slow and be kind to yourself. You're doing your best.",
-    "sad": "I'm sorry you're feeling this way. It's okay to not be okay sometimes. You're valued here.",
-    "tired": "Sounds like you've been working hard. Make sure you're resting enough — rest is productive too.",
+    "stress": "I'm sorry you're feeling stressed. You're not alone. Consider taking a short break, breathing slowly, or speaking with your manager or HR if it would help.",
+    "anxiety": "Anxiety can be difficult. Take it one step at a time and be kind to yourself. If it persists, consider speaking with your manager or HR.",
+    "sad": "I'm sorry you're feeling this way. It's okay to not be okay sometimes. If you’d like, you can speak with your manager or HR for support.",
+    "tired": "It sounds like you've been working hard. If possible, take a break, hydrate, and make sure you’re getting enough rest.",
 }
 
-def is_checkin_request(text):
+def is_checkin_request(text: str) -> bool:
     checkin_keywords = [
         "check in", "check-in", "how am i doing", "not feeling good",
         "motivate me", "motivation", "i’m unproductive", "i feel off"
     ]
-    text = text.lower()
+    text = (text or "").lower()
     return any(phrase in text for phrase in checkin_keywords)
 
-def log_mood_to_csv(mood_score):
+def log_mood_to_csv(mood_score: int):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    with open("mood_log.csv", mode="a", newline="") as file:
+    file_exists = os.path.exists("mood_log.csv")
+    with open("mood_log.csv", mode="a", newline="", encoding="utf-8") as file:
         writer = csv.writer(file)
+        # Optional header (only if file newly created)
+        if not file_exists:
+            writer.writerow(["Timestamp", "Mood"])
         writer.writerow([timestamp, mood_score])
 
+# -----------------------------
 # 🌟 UI Start
+# -----------------------------
 if "history" not in st.session_state:
     st.session_state.history = []
 
-st.title("👩‍💼 AI-powered HR Assistant")
-st.write("Ask me anything about your job, leave policy, resume, or mood check-in.")
+if "pending_checkin" not in st.session_state:
+    st.session_state.pending_checkin = False
 
+st.title("👩‍💼 AI-powered HR Assistant")
+st.write("Ask me anything about your job, leave policy, CV, or mood check-in.")
+
+# -----------------------------
 # 📄 Resume upload
+# -----------------------------
 st.markdown("### 📎 Upload Your Resume (Optional)")
 resume_file = st.file_uploader("Upload your resume (PDF or .txt)", type=["pdf", "txt"])
 resume_text = ""
-if resume_file:
-    if resume_file.type == "application/pdf":
-        doc = fitz.open(stream=resume_file.read(), filetype="pdf")
-        for page in doc:
-            resume_text += page.get_text()
-    elif resume_file.type == "text/plain":
-        resume_text = resume_file.read().decode("utf-8")
-    st.success("Resume uploaded successfully!")
 
+if resume_file:
+    try:
+        if resume_file.type == "application/pdf":
+            doc = fitz.open(stream=resume_file.read(), filetype="pdf")
+            for page in doc:
+                resume_text += page.get_text()
+        elif resume_file.type == "text/plain":
+            resume_text = resume_file.read().decode("utf-8", errors="ignore")
+        st.success("Resume uploaded successfully!")
+    except Exception as e:
+        st.warning(f"Could not read resume: {e}")
+
+# -----------------------------
 # 💬 User input
+# -----------------------------
 user_input = st.text_input("👤 You:")
 
-if st.button("Send") and user_input:
-    detected_mood = detect_mood(user_input)
-
-    if detected_mood:
-        reply = mood_responses[detected_mood]
-        st.session_state.history.append((user_input, reply))
-
-    elif is_checkin_request(user_input):
-        st.session_state.history.append((user_input, "Sure! On a scale of 1–10, how are you feeling today?"))
-        mood_score = st.number_input("Your mood (1 = bad, 10 = amazing):", min_value=1, max_value=10, step=1)
-        if st.button("Submit Mood"):
-            if mood_score <= 5:
-                reply = "I'm really sorry you're feeling that way. Take it easy on yourself — HR is always here to support you ❤️"
-            elif 6 <= mood_score <= 7:
-                reply = "You're doing better than you think. Keep going. 💪"
-            else:
-                reply = "You're crushing it! Keep the energy high and share the vibe! 🚀"
-            log_mood_to_csv(mood_score)
-            st.session_state.history.append((f"Mood: {mood_score}", reply))
-
-    else:
-        messages = [{
-            "role": "system",
-            "content": f"You are a friendly, professional HR assistant. Only refer to HR policies below:\n\n{HR_KNOWLEDGE}"
-        }]
-        for q, a in st.session_state.history:
-            messages.append({"role": "user", "content": q})
-            messages.append({"role": "assistant", "content": a})
-
-        if "resume" in user_input.lower() and resume_text:
-            user_input += f"\n\nHere is my resume:\n{resume_text[:2000]}"
-
-        messages.append({"role": "user", "content": user_input})
-
-        with st.spinner("Konan is typing..."):
-            response = client.chat.completions.create(model=model, messages=messages)
-            reply = response.choices[0].message.content.strip()
-            st.session_state.history.append((user_input, reply))
-
-    # 📝 Display chat
-    for q, a in st.session_state.history:
-        st.markdown(f"**👤 You:** {q}")
-        st.markdown(f"**🤖 Konan:** {a}")
-
-    # 🔊 Text-to-Speech
-    with NamedTemporaryFile(delete=True) as fp:
-        tts = gTTS(text=reply)
-        tts.save(fp.name + ".mp3")
-        st.audio(fp.name + ".mp3", format="audio/mp3")
-
-# 📈 Mood Trend Chart
-if os.path.exists("mood_log.csv"):
-    st.markdown("### 📈 Your Mood Trend")
-    mood_df = pd.read_csv("mood_log.csv", names=["Timestamp", "Mood"])
-    mood_df["Timestamp"] = pd.to_datetime(mood_df["Timestamp"])
-    fig, ax = plt.subplots()
-    ax.plot(mood_df["Timestamp"], mood_df["Mood"], marker='o', linestyle='-')
-    ax.set_title("Mood Over Time")
-    ax.set_xlabel("Date")
-    ax.set_ylabel("Mood (1-10)")
-    plt.xticks(rotation=45)
-    st.pyplot(fig)
+# If user already asked for a check-in, show the mood input
+if st.session_state.pending_checkin:
+    st.info("On a scale of 1–10, how are you feel
