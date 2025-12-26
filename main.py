@@ -4,187 +4,117 @@ import streamlit as st
 from datetime import datetime
 from openai import OpenAI
 
-# Optional PDF reader (PyMuPDF). App still runs without it.
+# Optional PDF reader
 try:
     import fitz  # PyMuPDF
 except Exception:
     fitz = None
 
 # -----------------------------
-# Page Config
+# Page config (no sidebar)
 # -----------------------------
-st.set_page_config(page_title="AI-powered HR Assistant", layout="centered")
+st.set_page_config(
+    page_title="AI-powered HR Assistant",
+    layout="centered",
+    initial_sidebar_state="collapsed"  # 👈 hides sidebar completely
+)
+
+# -----------------------------
+# Load API key (BACKEND ONLY)
+# -----------------------------
+DEEPSEEK_API_KEY = (
+    st.secrets.get("DEEPSEEK_API_KEY")
+    or os.environ.get("DEEPSEEK_API_KEY")
+)
+
+if not DEEPSEEK_API_KEY:
+    st.error(
+        "System configuration error: API key not found.\n\n"
+        "Please contact the administrator."
+    )
+    st.stop()
+
+client = OpenAI(
+    api_key=DEEPSEEK_API_KEY,
+    base_url="https://api.deepseek.com"
+)
+
+MODEL = "deepseek-chat"  # fixed internally
 
 # -----------------------------
 # HR Knowledge Base
 # -----------------------------
 HR_KNOWLEDGE = """
-🏢 HR Policy Summary (Internal):
-
 • Employees get 24 paid leave days per year.
 • Remote work is allowed up to 2 days per week.
-• Working hours are 9 AM to 6 PM (Monday to Friday).
-• Official holidays follow the UK calendar.
-• New employees are eligible for leave after 3 months.
+• Working hours are 9 AM–6 PM, Monday to Friday.
+• UK public holidays are observed.
+• Leave eligibility starts after 3 months.
 • Health insurance is provided by Bupa.
-• For emotional support, contact hr@konantech.com or your manager.
-• Job descriptions are available in the internal portal (portal.konantech.com).
-• Employees are expected to follow the code of conduct and report violations.
+• For support, contact hr@konantech.com or your manager.
 """.strip()
 
 # -----------------------------
-# Mood utilities
+# Mood helpers
 # -----------------------------
 def detect_mood(text: str):
-    text = (text or "").lower()
-    mood_map = {
-        "stress": ["i'm stressed", "im stressed", "feeling stressed", "pressure", "overwhelmed", "burnt out", "burned out"],
-        "anxiety": ["anxious", "worried", "panic", "nervous"],
-        "sad": ["sad", "feeling down", "depressed", "hopeless"],
-        "tired": ["tired", "exhausted", "drained", "no energy"],
-    }
-    for mood, phrases in mood_map.items():
-        if any(p in text for p in phrases):
-            return mood
+    text = text.lower()
+    if any(x in text for x in ["stressed", "overwhelmed", "burnt out"]):
+        return "stress"
+    if any(x in text for x in ["sad", "depressed", "down"]):
+        return "sad"
+    if any(x in text for x in ["tired", "exhausted"]):
+        return "tired"
     return None
 
 MOOD_RESPONSES = {
-    "stress": "I’m sorry you’re feeling stressed. Consider a short break, slow breathing, and prioritising one thing at a time. If helpful, speak with your manager or HR.",
-    "anxiety": "Anxiety can be difficult. Take it step by step. If it persists or escalates, please consider speaking with your manager or HR.",
-    "sad": "I’m sorry you’re feeling this way. If you’d like, consider speaking with your manager or HR for support.",
-    "tired": "It sounds like you’ve been working hard. If possible, take a break, hydrate, and protect your rest.",
+    "stress": "I’m sorry you’re feeling stressed. Consider taking a short break or speaking with your manager or HR.",
+    "sad": "I’m sorry you’re feeling this way. You’re not alone — support is available.",
+    "tired": "It sounds like you’ve been working hard. Rest and recovery are important.",
 }
 
-def is_checkin_request(text: str) -> bool:
-    text = (text or "").lower()
-    keywords = [
-        "check in", "check-in", "mood check", "mood check-in",
-        "how am i doing", "not feeling good", "motivate me", "motivation",
-        "i feel off", "im unproductive", "i’m unproductive"
-    ]
-    return any(k in text for k in keywords)
+def is_checkin(text: str):
+    return any(x in text.lower() for x in ["check in", "mood", "how am i doing"])
 
-def log_mood_to_csv(score: int, filepath: str = "mood_log.csv"):
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    exists = os.path.exists(filepath)
-    with open(filepath, "a", newline="", encoding="utf-8") as f:
-        w = csv.writer(f)
-        if not exists:
-            w.writerow(["Timestamp", "Mood"])
-        w.writerow([ts, score])
-
-# -----------------------------
-# API Key Loader (Secrets > Env > Manual)
-# -----------------------------
-def get_deepseek_key():
-    # 1) Streamlit secrets
-    if "DEEPSEEK_API_KEY" in st.secrets and str(st.secrets["DEEPSEEK_API_KEY"]).strip():
-        return str(st.secrets["DEEPSEEK_API_KEY"]).strip()
-
-    # 2) Environment variable
-    env_key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
-    if env_key:
-        return env_key
-
-    return ""
+def log_mood(score: int):
+    with open("mood_log.csv", "a", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow([datetime.now().isoformat(), score])
 
 # -----------------------------
 # UI Header
 # -----------------------------
 st.title("AI-powered HR Assistant")
-st.write("Ask about HR policy, leave, remote work, CV feedback, or run a quick mood check-in.")
+st.caption("Ask about HR policy, leave, remote work, or request a mood check-in.")
 
-with st.expander("HR Policy (Reference)", expanded=False):
+with st.expander("HR Policy Reference"):
     st.markdown(HR_KNOWLEDGE)
-
-# -----------------------------
-# Sidebar: API setup + strict test
-# -----------------------------
-st.sidebar.header("Configuration")
-
-auto_key = get_deepseek_key()
-manual_key = st.sidebar.text_input(
-    "DeepSeek API Key (only if not set in Secrets/Env)",
-    value="",
-    type="password",
-    help="Recommended: set in Streamlit Secrets as DEEPSEEK_API_KEY."
-)
-
-DEEPSEEK_API_KEY = manual_key.strip() if manual_key.strip() else auto_key
-
-base_url = st.sidebar.selectbox(
-    "Base URL",
-    options=["https://api.deepseek.com", "https://api.deepseek.com/v1"],
-    index=0
-)
-
-model = st.sidebar.selectbox(
-    "Model",
-    options=["deepseek-chat", "deepseek-reasoner"],
-    index=0
-)
-
-st.sidebar.caption(
-    f"Key detected: {'Yes' if DEEPSEEK_API_KEY else 'No'}"
-    + (f" (length {len(DEEPSEEK_API_KEY)})" if DEEPSEEK_API_KEY else "")
-)
-
-client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=base_url) if DEEPSEEK_API_KEY else None
-
-if st.sidebar.button("Test Connection"):
-    if not client:
-        st.sidebar.error("No API key provided. Add it in Streamlit Secrets or paste it above.")
-    else:
-        try:
-            r = client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": "Reply with exactly: OK"}],
-                max_tokens=10,
-                temperature=0.0,
-            )
-            content = (r.choices[0].message.content or "").strip()
-            if content == "OK":
-                st.sidebar.success("OK")
-            else:
-                st.sidebar.warning(f"Connected, but unexpected reply: {repr(content)}")
-        except Exception as e:
-            st.sidebar.error("Connection test failed.")
-            st.sidebar.exception(e)
 
 # -----------------------------
 # Resume upload (optional)
 # -----------------------------
-st.markdown("### Upload Your Resume (Optional)")
-resume_file = st.file_uploader("Upload your resume (PDF or .txt)", type=["pdf", "txt"])
 resume_text = ""
+resume = st.file_uploader("Upload your resume (optional)", type=["pdf", "txt"])
 
-if resume_file is not None:
-    try:
-        if resume_file.type == "application/pdf":
-            if fitz is None:
-                st.warning("PDF support requires PyMuPDF. Add 'PyMuPDF' to requirements.txt or upload .txt instead.")
-            else:
-                doc = fitz.open(stream=resume_file.read(), filetype="pdf")
-                resume_text = "\n".join([p.get_text() for p in doc])
-                st.success("Resume uploaded successfully.")
-        else:
-            resume_text = resume_file.read().decode("utf-8", errors="ignore")
-            st.success("Resume uploaded successfully.")
-    except Exception as e:
-        st.warning("Could not read resume.")
-        st.exception(e)
-
-st.divider()
+if resume:
+    if resume.type == "application/pdf" and fitz:
+        doc = fitz.open(stream=resume.read(), filetype="pdf")
+        resume_text = "\n".join(p.get_text() for p in doc)
+    elif resume.type == "text/plain":
+        resume_text = resume.read().decode("utf-8", errors="ignore")
 
 # -----------------------------
-# Session state for chat
+# Session state
 # -----------------------------
 if "history" not in st.session_state:
     st.session_state.history = []
+
 if "pending_checkin" not in st.session_state:
     st.session_state.pending_checkin = False
 
-# Display chat history
+# -----------------------------
+# Display chat
+# -----------------------------
 for msg in st.session_state.history:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
@@ -197,17 +127,16 @@ if not user_text:
     st.stop()
 
 text = user_text.strip()
-
-# Render user's message immediately
 st.session_state.history.append({"role": "user", "content": text})
+
 with st.chat_message("user"):
     st.markdown(text)
 
 # -----------------------------
-# Quick flows
+# Fast paths
 # -----------------------------
 if text.lower() in {"hi", "hello", "hey"}:
-    reply = "Hello. Ask me something like: ‘How many leave days do I get?’ or ‘Can you review my CV summary?’"
+    reply = "Hello. Ask me about leave, HR policy, or upload your CV for feedback."
     st.session_state.history.append({"role": "assistant", "content": reply})
     with st.chat_message("assistant"):
         st.markdown(reply)
@@ -221,9 +150,9 @@ if mood:
         st.markdown(reply)
     st.stop()
 
-if is_checkin_request(text):
+if is_checkin(text):
     st.session_state.pending_checkin = True
-    reply = "On a scale of 1–10, how are you feeling today? Type a number and press Enter."
+    reply = "On a scale of 1–10, how are you feeling today?"
     st.session_state.history.append({"role": "assistant", "content": reply})
     with st.chat_message("assistant"):
         st.markdown(reply)
@@ -232,73 +161,45 @@ if is_checkin_request(text):
 if st.session_state.pending_checkin:
     try:
         score = int(text)
-        if not (1 <= score <= 10):
+        if 1 <= score <= 10:
+            log_mood(score)
+            st.session_state.pending_checkin = False
+            reply = f"Thanks — I’ve logged your mood as {score}/10."
+        else:
             raise ValueError
-        log_mood_to_csv(score)
-        st.session_state.pending_checkin = False
-        reply = (
-            f"Thanks — I’ve logged your mood as **{score}/10**.\n\n"
-            "If you’d like, tell me what’s driving that score and I’ll suggest practical next steps."
-        )
-        st.session_state.history.append({"role": "assistant", "content": reply})
-        with st.chat_message("assistant"):
-            st.markdown(reply)
-        st.stop()
-    except Exception:
-        reply = "Please enter a whole number from **1 to 10**."
-        st.session_state.history.append({"role": "assistant", "content": reply})
-        with st.chat_message("assistant"):
-            st.markdown(reply)
-        st.stop()
+    except ValueError:
+        reply = "Please enter a number between 1 and 10."
 
-# -----------------------------
-# DeepSeek call
-# -----------------------------
-if not client:
-    reply = (
-        "I can’t call DeepSeek yet because the API key is missing.\n\n"
-        "Add it in Streamlit Secrets as **DEEPSEEK_API_KEY** (recommended) or paste it in the sidebar."
-    )
     st.session_state.history.append({"role": "assistant", "content": reply})
     with st.chat_message("assistant"):
         st.markdown(reply)
     st.stop()
 
-# Keep context short
-recent = st.session_state.history[-12:]
-context = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in recent])
-
+# -----------------------------
+# LLM call
+# -----------------------------
 prompt = f"""
-You are an HR assistant for a UK-based company.
-Use the HR policy and (if provided) the resume text to answer accurately and practically.
-If the question is unclear, ask ONE clarifying question.
+You are an HR assistant.
+Use the HR policy and resume (if any) to answer clearly and professionally.
 
 HR POLICY:
 {HR_KNOWLEDGE}
 
-RESUME (optional):
-{resume_text[:4000]}
+RESUME:
+{resume_text[:3000]}
 
-CONTEXT:
-{context}
-
-Now answer the latest USER message: "{text}"
+USER QUESTION:
+{text}
 """.strip()
 
 with st.chat_message("assistant"):
     with st.spinner("Thinking..."):
-        try:
-            resp = client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=700,
-                temperature=0.2,
-            )
-            reply = (resp.choices[0].message.content or "").strip()
-            if not reply:
-                reply = "Empty response returned."
-            st.markdown(reply)
-            st.session_state.history.append({"role": "assistant", "content": reply})
-        except Exception as e:
-            st.error("DeepSeek request failed (see details below).")
-            st.exception(e)
+        response = client.chat.completions.create(
+            model=MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=600,
+            temperature=0.2,
+        )
+        reply = response.choices[0].message.content.strip()
+        st.markdown(reply)
+        st.session_state.history.append({"role": "assistant", "content": reply})
