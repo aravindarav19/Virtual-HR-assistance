@@ -94,11 +94,11 @@ def get_deepseek_key():
 st.title("AI-powered HR Assistant")
 st.write("Ask about HR policy, leave, remote work, CV feedback, or run a quick mood check-in.")
 
-with st.expander("HR Policy (Reference)"):
+with st.expander("HR Policy (Reference)", expanded=False):
     st.markdown(HR_KNOWLEDGE)
 
 # -----------------------------
-# Sidebar: API setup + test
+# Sidebar: API setup + strict test
 # -----------------------------
 st.sidebar.header("Configuration")
 
@@ -107,7 +107,7 @@ manual_key = st.sidebar.text_input(
     "DeepSeek API Key (only if not set in Secrets/Env)",
     value="",
     type="password",
-    help="Prefer Streamlit Secrets: DEEPSEEK_API_KEY"
+    help="Recommended: set in Streamlit Secrets as DEEPSEEK_API_KEY."
 )
 
 DEEPSEEK_API_KEY = manual_key.strip() if manual_key.strip() else auto_key
@@ -115,8 +115,7 @@ DEEPSEEK_API_KEY = manual_key.strip() if manual_key.strip() else auto_key
 base_url = st.sidebar.selectbox(
     "Base URL",
     options=["https://api.deepseek.com", "https://api.deepseek.com/v1"],
-    index=0,
-    help="DeepSeek supports OpenAI-compatible base_url."
+    index=0
 )
 
 model = st.sidebar.selectbox(
@@ -125,16 +124,16 @@ model = st.sidebar.selectbox(
     index=0
 )
 
-if not DEEPSEEK_API_KEY:
-    st.sidebar.warning("No API key detected yet (Secrets/Env/manual). The assistant cannot call DeepSeek.")
+st.sidebar.caption(
+    f"Key detected: {'Yes' if DEEPSEEK_API_KEY else 'No'}"
+    + (f" (length {len(DEEPSEEK_API_KEY)})" if DEEPSEEK_API_KEY else "")
+)
 
-client = None
-if DEEPSEEK_API_KEY:
-    client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=base_url)
+client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=base_url) if DEEPSEEK_API_KEY else None
 
 if st.sidebar.button("Test Connection"):
     if not client:
-        st.sidebar.error("Add your API key first.")
+        st.sidebar.error("No API key provided. Add it in Streamlit Secrets or paste it above.")
     else:
         try:
             r = client.chat.completions.create(
@@ -143,7 +142,11 @@ if st.sidebar.button("Test Connection"):
                 max_tokens=10,
                 temperature=0.0,
             )
-            st.sidebar.success((r.choices[0].message.content or "").strip() or "(empty)")
+            content = (r.choices[0].message.content or "").strip()
+            if content == "OK":
+                st.sidebar.success("OK")
+            else:
+                st.sidebar.warning(f"Connected, but unexpected reply: {repr(content)}")
         except Exception as e:
             st.sidebar.error("Connection test failed.")
             st.sidebar.exception(e)
@@ -177,7 +180,7 @@ st.divider()
 # Session state for chat
 # -----------------------------
 if "history" not in st.session_state:
-    st.session_state.history = []  # [{"role": "user"/"assistant", "content": "..."}]
+    st.session_state.history = []
 if "pending_checkin" not in st.session_state:
     st.session_state.pending_checkin = False
 
@@ -194,11 +197,15 @@ if not user_text:
     st.stop()
 
 text = user_text.strip()
+
+# Render user's message immediately
 st.session_state.history.append({"role": "user", "content": text})
 with st.chat_message("user"):
     st.markdown(text)
 
-# Quick paths
+# -----------------------------
+# Quick flows
+# -----------------------------
 if text.lower() in {"hi", "hello", "hey"}:
     reply = "Hello. Ask me something like: ‘How many leave days do I get?’ or ‘Can you review my CV summary?’"
     st.session_state.history.append({"role": "assistant", "content": reply})
@@ -229,7 +236,10 @@ if st.session_state.pending_checkin:
             raise ValueError
         log_mood_to_csv(score)
         st.session_state.pending_checkin = False
-        reply = f"Thanks — I’ve logged your mood as **{score}/10**. If you’d like, tell me what’s driving that score and I’ll suggest next steps."
+        reply = (
+            f"Thanks — I’ve logged your mood as **{score}/10**.\n\n"
+            "If you’d like, tell me what’s driving that score and I’ll suggest practical next steps."
+        )
         st.session_state.history.append({"role": "assistant", "content": reply})
         with st.chat_message("assistant"):
             st.markdown(reply)
@@ -245,13 +255,16 @@ if st.session_state.pending_checkin:
 # DeepSeek call
 # -----------------------------
 if not client:
-    reply = "I can’t call DeepSeek yet because the API key is missing. Add it in Streamlit Secrets as **DEEPSEEK_API_KEY** (recommended), or paste it in the sidebar."
+    reply = (
+        "I can’t call DeepSeek yet because the API key is missing.\n\n"
+        "Add it in Streamlit Secrets as **DEEPSEEK_API_KEY** (recommended) or paste it in the sidebar."
+    )
     st.session_state.history.append({"role": "assistant", "content": reply})
     with st.chat_message("assistant"):
         st.markdown(reply)
     st.stop()
 
-# Keep context small
+# Keep context short
 recent = st.session_state.history[-12:]
 context = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in recent])
 
@@ -268,6 +281,8 @@ RESUME (optional):
 
 CONTEXT:
 {context}
+
+Now answer the latest USER message: "{text}"
 """.strip()
 
 with st.chat_message("assistant"):
@@ -279,7 +294,9 @@ with st.chat_message("assistant"):
                 max_tokens=700,
                 temperature=0.2,
             )
-            reply = (resp.choices[0].message.content or "").strip() or "Empty response returned."
+            reply = (resp.choices[0].message.content or "").strip()
+            if not reply:
+                reply = "Empty response returned."
             st.markdown(reply)
             st.session_state.history.append({"role": "assistant", "content": reply})
         except Exception as e:
