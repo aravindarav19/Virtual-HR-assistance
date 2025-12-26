@@ -124,4 +124,5 @@ user_input = st.text_input("👤 You:")
 
 # If user already asked for a check-in, show the mood input
 if st.session_state.pending_checkin:
-    st.info("On a scale of 1–10, how are you feel
+    st.info("On a scale of 1–10, how are you feel)
+
