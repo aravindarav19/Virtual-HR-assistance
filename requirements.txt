@@ -1,6 +1,5 @@
-streamlit
-together
-gTTS
-PyMuPDF
-matplotlib
+streamlit>=1.30
 pandas
+matplotlib
+openpyxl
+requests
